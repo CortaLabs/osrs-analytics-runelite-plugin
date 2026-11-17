@@ -95,4 +95,24 @@ public class EquipmentCollectorTest
 		assertEquals(a, EquipmentCollector.signature(new LinkedHashMap<>(),
 			new ArrayList<>(Arrays.asList(new ItemEntry(995, 1), new ItemEntry(385, 1)))));
 	}
+
+	@Test
+	public void firedAmmoChangesSignatureButSingleItemQuantityIsNeutral()
+	{
+		Map<String, Integer> worn = equip("ammo", 892, "weapon", 861);
+		Map<String, Integer> full = new LinkedHashMap<>();
+		full.put("ammo", 500);
+		full.put("weapon", 1);
+		Map<String, Integer> fired = new LinkedHashMap<>(full);
+		fired.put("ammo", 499);
+		assertNotEquals(
+			EquipmentCollector.signature(worn, full, inv(995, 1)),
+			EquipmentCollector.signature(worn, fired, inv(995, 1)));
+		// a quantity of 1 is the pre-1.9 implicit value: same fingerprint as before
+		Map<String, Integer> ones = new LinkedHashMap<>();
+		ones.put("weapon", 1);
+		assertEquals(
+			EquipmentCollector.signature(equip("weapon", 861), inv(995, 1)),
+			EquipmentCollector.signature(equip("weapon", 861), ones, inv(995, 1)));
+	}
 }
