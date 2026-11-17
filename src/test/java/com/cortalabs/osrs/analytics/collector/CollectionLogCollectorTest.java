@@ -4,6 +4,8 @@
  */
 package com.cortalabs.osrs.analytics.collector;
 
+import com.cortalabs.osrs.analytics.dto.SignalEvent;
+
 import com.cortalabs.osrs.analytics.collector.CollectionLogCollector.Capture;
 import com.cortalabs.osrs.analytics.collector.CollectionLogCollector.DrawnSlot;
 import com.cortalabs.osrs.analytics.collector.CollectionLogCollector.NamedSlot;
@@ -164,11 +166,16 @@ public class CollectionLogCollectorTest
 	}
 
 	@Test
-	public void dropActivityConstantIsStable()
+	public void chatDropIsADiscreteCollectionLogSignal()
 	{
-		// The append-only activity the chat catch rides; the moment must never
-		// enter the keyed collection-log stream.
-		assertEquals("collection_log_drop", CollectionLogCollector.DROP_ACTIVITY);
+		// Each drop is its own witnessed event (never the keyed item stream, never
+		// a per-type activity that the next drop would displace).
+		SignalEvent s = CollectionLogCollector.dropSignal(new SignalEvent(), "Bolt rack", "2026-08-13T10:04:04Z");
+		assertEquals(SignalEvent.SignalType.COLLECTION_LOG, s.signalType);
+		assertEquals("Bolt rack", s.subject);
+		assertEquals("New item added to your collection log: Bolt rack", s.detail);
+		assertEquals("2026-08-13T10:04:04Z", s.timestamp);
+		assertNull(s.value);
 	}
 
 	// ------------------------------------------------------------------

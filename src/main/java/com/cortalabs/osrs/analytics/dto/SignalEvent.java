@@ -69,7 +69,10 @@ public class SignalEvent extends PluginPayload
 		@SerializedName("harvest_count")
 		HARVEST_COUNT,
 		@SerializedName("completion_count")
-		COMPLETION_COUNT
+		COMPLETION_COUNT,
+		/** A chat-caught "New item added to your collection log: X" (1.9.0). */
+		@SerializedName("collection_log")
+		COLLECTION_LOG
 	}
 
 	/** Clamp a witnessed line to the wire contract's 500-char maximum. */

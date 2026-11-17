@@ -658,7 +658,8 @@ public class DtoSerializationTest
 		assertEquals("\"lap_count\"", GSON.toJson(SignalEvent.SignalType.LAP_COUNT));
 		assertEquals("\"harvest_count\"", GSON.toJson(SignalEvent.SignalType.HARVEST_COUNT));
 		assertEquals("\"completion_count\"", GSON.toJson(SignalEvent.SignalType.COMPLETION_COUNT));
-		assertEquals(9, SignalEvent.SignalType.values().length);
+		assertEquals("\"collection_log\"", GSON.toJson(SignalEvent.SignalType.COLLECTION_LOG));
+		assertEquals(10, SignalEvent.SignalType.values().length);
 	}
 
 	@Test
