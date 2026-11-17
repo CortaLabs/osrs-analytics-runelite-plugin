@@ -675,7 +675,7 @@ public class DtoSerializationTest
 		trade.state = GeTrade.GeTradeState.BOUGHT;
 		trade.quantity = 100;
 		trade.spent = 5_000_000_000L; // exceeds 32-bit range -> BIGINT / long on the wire
-		trade.priceEach = 50_000_000;
+		trade.priceEach = 50_000_000L;
 		trade.slot = 3;
 
 		JsonObject o = json(trade);

@@ -101,7 +101,7 @@ public class LootCollector
 		payload.itemId = stack.getId();
 		payload.itemName = itemName(stack.getId());
 		payload.quantity = stack.getQuantity();
-		payload.geValue = (long) itemManager.getItemPrice(stack.getId()) * stack.getQuantity();
+		payload.geValue = itemManager.getItemPrice(stack.getId()) * stack.getQuantity();
 		payload.source = clamp(source == null ? "Unknown" : source, 100);
 		payload.sourceType = type;
 		analytics.enqueue(EventCategory.LOOT, payload);
