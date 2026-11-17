@@ -15,7 +15,7 @@ For a complete, concrete run/verify walkthrough see [`TESTING.md`](TESTING.md).
 | Category | Status | Notes |
 |---|---|---|
 | Sessions | Full | login / logout (with duration) / world-hop |
-| XP | Full | periodic snapshot of all 24 skills (incl. `sailing`), interval configurable |
+| XP | Full | all 24 skills (incl. `sailing`) when XP changes, at most once a minute; flushed at logout |
 | Quests | Full | per-quest state for the full Quest enum (incl. `not_started`), plus quest points (varp 101) and a quest/miniquest/subquest type derived from the OSRS Wiki miniquest list; diff state resets per RSN |
 | Achievement diaries | Full | per-tier completion for all 12 regions, source-verified varbits; Karamja's 3-state easy/medium/hard handled correctly; live-validated 12-for-12 against a real account (2026-07-17) |
 | Combat achievements | Full | completed-task count per tier (easy → grandmaster), source-verified varbits |
@@ -154,7 +154,7 @@ Config group `osrsanalytics`:
 
 - **Connection** — enable toggle, API base URL
   (`http://localhost:8000/api/v1/plugin`), API key (secret), flush interval
-  (default 15s), XP snapshot interval (default 5 min).
+  (default 15s). XP is sent when it changes, at most once a minute (1.10.0).
 - **Categories** — sessions, xp, quests, diaries, combat achievements, equipment,
   loot, activity (all on by default).
 - **Private data** — collection log, bank (on by default for this deployment;
