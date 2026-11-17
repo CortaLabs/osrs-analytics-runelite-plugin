@@ -47,13 +47,13 @@ import net.runelite.client.util.Text;
  *       multi-combat last-hit by someone else, or a tag-and-leave, can miss or
  *       misattribute — so it is deliberately conservative and never counts a death the
  *       player had no interaction with.</li>
- *   <li><b>KC chat</b> — the game's own "Your &lt;subject&gt; (kill|harvest|lap|
- *       completion) count is: N" line, which is authoritatively player-attributed by
- *       the game. This catches the kills {@code ActorDeath} misses (bosses that despawn
- *       rather than emit a clean death). The corpus is the same one
- *       {@link SignalEventCollector} matches for {@code boss_kc}; the pattern is kept
- *       local because that constant is private and {@code SignalEventCollector} is
- *       outside this collector's change scope.</li>
+ *   <li><b>KC chat</b> — the game's own "Your &lt;subject&gt; kill count is: N" line,
+ *       which is authoritatively player-attributed by the game. This catches the kills
+ *       {@code ActorDeath} misses (bosses that despawn rather than emit a clean death).
+ *       Only the KILL form counts: the same corpus also carries lap (agility courses),
+ *       harvest and completion counts, which are not NPC kills — "712 Rellekka Rooftop
+ *       kills" was exactly that misclassification. Those lines still reach the server
+ *       as {@code boss_kc} signal events with the full line in {@code detail}.</li>
  * </ul>
  *
  * <p><b>Same-kill dedup ({@link NpcKillTally}).</b> A boss produces BOTH an
@@ -77,14 +77,13 @@ import net.runelite.client.util.Text;
 public class NpcKillCollector
 {
 	/**
-	 * The game's kill-count line — the same Chat-Commands corpus
-	 * {@link SignalEventCollector} matches for {@code boss_kc}: "Your &lt;subject&gt;
-	 * (kill|harvest|lap|completion) count is: N" (tags already stripped). Duplicated here
-	 * with attribution because that constant is private and {@code SignalEventCollector}
-	 * is outside this collector's change scope.
+	 * The game's NPC kill-count line, "Your &lt;subject&gt; kill count is: N" (tags
+	 * already stripped). Deliberately narrower than {@link SignalEventCollector}'s
+	 * {@code boss_kc} corpus, which also matches lap/harvest/completion counts: those
+	 * describe courses and activities, never NPC kills.
 	 */
 	private static final Pattern KILL_COUNT =
-		Pattern.compile("Your (.+?) (?:kill|harvest|lap|completion) count is: ?[0-9,]+");
+		Pattern.compile("Your (.+?) kill count is: ?[0-9,]+");
 
 	private final Client client;
 	private final AnalyticsClient analytics;

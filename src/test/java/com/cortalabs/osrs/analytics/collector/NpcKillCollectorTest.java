@@ -53,6 +53,11 @@ public class NpcKillCollectorTest
 	public void nonKillCountLineParsesToNull()
 	{
 		assertNull(NpcKillCollector.parseKillCountSubject("Oh dear, you are dead!"));
+		// Laps, harvests and completions are not NPC kills (Rellekka Rooftop was
+		// once reported as "712 kills").
+		assertNull(NpcKillCollector.parseKillCountSubject("Your Rellekka Rooftop lap count is: 3281."));
+		assertNull(NpcKillCollector.parseKillCountSubject("Your Hespori harvest count is: 4"));
+		assertNull(NpcKillCollector.parseKillCountSubject("Your Gauntlet completion count is: 12"));
 		assertNull(NpcKillCollector.parseKillCountSubject("You have completed 42 medium Treasure Trails."));
 		assertNull(NpcKillCollector.parseKillCountSubject(null));
 	}

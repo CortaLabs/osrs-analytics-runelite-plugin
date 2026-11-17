@@ -63,7 +63,13 @@ public class SignalEvent extends PluginPayload
 		@SerializedName("diary_completion")
 		DIARY_COMPLETION,
 		@SerializedName("quest_completion")
-		QUEST_COMPLETION
+		QUEST_COMPLETION,
+		@SerializedName("lap_count")
+		LAP_COUNT,
+		@SerializedName("harvest_count")
+		HARVEST_COUNT,
+		@SerializedName("completion_count")
+		COMPLETION_COUNT
 	}
 
 	/** Clamp a witnessed line to the wire contract's 500-char maximum. */
