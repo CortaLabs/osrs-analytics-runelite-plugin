@@ -9,6 +9,7 @@ import com.cortalabs.osrs.analytics.dto.EfficiencyEnvelope;
 import com.cortalabs.osrs.analytics.transport.AnalyticsClient;
 import com.cortalabs.osrs.analytics.transport.EventCategory;
 import java.util.UUID;
+import java.util.function.Supplier;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 import net.runelite.api.Client;
@@ -55,11 +56,12 @@ public class EfficiencyCollector
 	private final Client client;
 	private final AnalyticsClient analytics;
 	private final AnalyticsConfig config;
-	private final EfficiencyAccumulator accumulator = new EfficiencyAccumulator();
+	private final EfficiencyAccumulator accumulator;
 
 	@Inject
-	public EfficiencyCollector(Client client, AnalyticsClient analytics, AnalyticsConfig config)
+	public EfficiencyCollector(Client client, AnalyticsClient analytics, AnalyticsConfig config, SessionContext sessions)
 	{
+		this.accumulator = new EfficiencyAccumulator(sessions::current);
 		this.client = client;
 		this.analytics = analytics;
 		this.config = config;
@@ -127,6 +129,7 @@ public class EfficiencyCollector
 	 */
 	static final class EfficiencyAccumulator
 	{
+		private final Supplier<String> sessionIds;
 		private long account = AccountKeyedDeltaGuard.NO_ACCOUNT;
 		private String sessionId;
 		private String rsn;
@@ -135,6 +138,16 @@ public class EfficiencyCollector
 		private long idleTicks;
 		private int worldHops;
 		private int lastWorld = -1;
+
+		EfficiencyAccumulator()
+		{
+			this(() -> UUID.randomUUID().toString());
+		}
+
+		EfficiencyAccumulator(Supplier<String> sessionIds)
+		{
+			this.sessionIds = sessionIds;
+		}
 
 		/** A game tick is idle only when BOTH input channels are still past the threshold. */
 		static boolean isIdle(int mouseIdleTicks, int keyboardIdleTicks)
@@ -158,7 +171,7 @@ public class EfficiencyCollector
 			if (!active)
 			{
 				active = true;
-				sessionId = UUID.randomUUID().toString();
+				sessionId = sessionIds.get();
 				lastWorld = world;
 			}
 			else if (world != lastWorld)
