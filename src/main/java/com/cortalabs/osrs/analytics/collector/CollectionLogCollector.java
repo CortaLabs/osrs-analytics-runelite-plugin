@@ -5,9 +5,9 @@
 package com.cortalabs.osrs.analytics.collector;
 
 import com.cortalabs.osrs.analytics.AnalyticsConfig;
-import com.cortalabs.osrs.analytics.dto.ActivityUpdate;
 import com.cortalabs.osrs.analytics.dto.CollectionLogEntry;
 import com.cortalabs.osrs.analytics.dto.CollectionPageSummary;
+import com.cortalabs.osrs.analytics.dto.SignalEvent;
 import com.cortalabs.osrs.analytics.transport.AnalyticsClient;
 import com.cortalabs.osrs.analytics.transport.EventCategory;
 import java.util.ArrayList;
@@ -49,8 +49,10 @@ import net.runelite.client.util.Text;
  *       the keyed collection-log stream — where an {@code item_id == 0} row would
  *       collide with every other id-less row under the backend's
  *       {@code (account_id, item_id)} upsert and clobber it. Instead the moment
- *       is preserved losslessly as an append-only {@link ActivityUpdate}
- *       ({@code activity = "collection_log_drop"}, {@code detail = item name}),
+ *       is preserved losslessly as a discrete {@link SignalEvent}
+ *       ({@code signal_type = "collection_log"}, {@code subject = item name};
+ *       1.9.0 — it was an {@code ActivityUpdate} before, whose per-type keying let
+ *       each drop displace the previous one from report selection),
  *       and the real id follows from the next full walk. The moment is
  *       <i>additionally</i> held in {@link #pendingChatDrops} so the walk that
  *       resolves the name can stamp the keyed row with the true acquisition
@@ -82,7 +84,7 @@ import net.runelite.client.util.Text;
  * <p>The plugin degrades honestly rather than guessing: a chat catch whose walk
  * never comes (log never opened, client restarted) emits nothing at all, and the
  * later walk emits {@code walk_inferred} — the moment is not lost, it survives in
- * the append-only activity stream. Ambiguity resolves to absence, never to a
+ * the signal-event stream. Ambiguity resolves to absence, never to a
  * guess (see {@link #resolveCaptures}).
  *
  * <p>This mirrors the WikiSync / RuneLite chat-commands approach to reading the
@@ -92,8 +94,6 @@ import net.runelite.client.util.Text;
 public class CollectionLogCollector
 {
 	private static final String PREFIX = "New item added to your collection log:";
-	/** Activity value for a chat-caught collection log drop (append-only stream). */
-	static final String DROP_ACTIVITY = "collection_log_drop";
 	/** Child index of the category title inside the collection log header widget. */
 	private static final int HEADER_TITLE_INDEX = 0;
 	private static final int MAX_SOURCE_LENGTH = 100;
@@ -102,7 +102,7 @@ public class CollectionLogCollector
 	 * Cap on {@link #pendingChatDrops}, bounding footprint when a player racks up
 	 * drops without ever opening their log. Eviction is oldest-first and only ever
 	 * costs an {@code obtained_at} (the row still syncs, as {@code walk_inferred},
-	 * and the moment still reaches the backend via the activity stream) — it can
+	 * and the moment still reaches the backend as a collection_log signal) — it can
 	 * never produce a wrong date.
 	 */
 	private static final int MAX_PENDING_CHAT_DROPS = 256;
@@ -176,7 +176,7 @@ public class CollectionLogCollector
 
 		// This is the only moment anyone ever witnesses the acquisition, so it is
 		// recorded twice, for two different jobs. (1) Losslessly, in the append-only
-		// activity stream: the chat line has no item id, so it must NOT enter the
+		// signal-event stream: the chat line has no item id, so it must NOT enter the
 		// keyed (account_id, item_id) stream (every id-less row would clobber the
 		// last). (2) Parked in pendingChatDrops, so the walk that resolves this name
 		// to a real id can stamp the keyed row with this timestamp rather than its
@@ -184,12 +184,24 @@ public class CollectionLogCollector
 		String chatAt = Payloads.isoNow();
 		pendingChatDrops.put(itemName, chatAt);
 
-		ActivityUpdate payload = new ActivityUpdate();
+		SignalEvent payload = new SignalEvent();
 		Payloads.base(payload, client, rsn);
+		dropSignal(payload, itemName, chatAt);
+		analytics.enqueue(EventCategory.SIGNAL_EVENT, payload);
+	}
+
+	/**
+	 * Shape a chat-caught drop as a discrete witnessed signal: every drop is its own
+	 * event (id-keyed downstream), so a burst of drops in one window all survive.
+	 * The verbatim chat line rides in {@code detail}; the name is the subject.
+	 */
+	static SignalEvent dropSignal(SignalEvent payload, String itemName, String chatAt)
+	{
 		payload.timestamp = chatAt;
-		payload.activity = DROP_ACTIVITY;
-		payload.detail = itemName;
-		analytics.enqueue(EventCategory.ACTIVITY, payload);
+		payload.signalType = SignalEvent.SignalType.COLLECTION_LOG;
+		payload.subject = itemName;
+		payload.detail = SignalEvent.clampDetail(PREFIX + " " + itemName);
+		return payload;
 	}
 
 	private void resetIfRsnChanged(String rsn)

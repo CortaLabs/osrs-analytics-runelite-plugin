@@ -321,8 +321,13 @@ public class DtoSerializationTest
 		eq.pluginVersion = "1.0.0";
 		eq.equipment = equipment;
 		eq.inventory = Arrays.asList(new ItemEntry(995, 1000));
+		Map<String, Integer> quantities = new LinkedHashMap<>();
+		quantities.put("weapon", 1);
+		quantities.put("shield", 1);
+		eq.equipmentQuantities = quantities;
 
 		JsonObject o = json(eq);
+		assertEquals(1, o.getAsJsonObject("equipment_quantities").get("weapon").getAsInt());
 		JsonObject equip = o.getAsJsonObject("equipment");
 		assertEquals(4151, equip.get("weapon").getAsInt());
 		assertEquals(8850, equip.get("shield").getAsInt());
@@ -653,7 +658,8 @@ public class DtoSerializationTest
 		assertEquals("\"lap_count\"", GSON.toJson(SignalEvent.SignalType.LAP_COUNT));
 		assertEquals("\"harvest_count\"", GSON.toJson(SignalEvent.SignalType.HARVEST_COUNT));
 		assertEquals("\"completion_count\"", GSON.toJson(SignalEvent.SignalType.COMPLETION_COUNT));
-		assertEquals(9, SignalEvent.SignalType.values().length);
+		assertEquals("\"collection_log\"", GSON.toJson(SignalEvent.SignalType.COLLECTION_LOG));
+		assertEquals(10, SignalEvent.SignalType.values().length);
 	}
 
 	@Test

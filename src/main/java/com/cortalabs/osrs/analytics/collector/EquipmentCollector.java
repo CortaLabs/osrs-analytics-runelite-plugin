@@ -10,6 +10,7 @@ import com.cortalabs.osrs.analytics.dto.ItemEntry;
 import com.cortalabs.osrs.analytics.transport.AnalyticsClient;
 import com.cortalabs.osrs.analytics.transport.EventCategory;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -100,7 +101,9 @@ public class EquipmentCollector
 
 	private void snapshot(String rsn)
 	{
-		Map<String, Integer> equipment = readEquipment();
+		Map<String, Integer> equipment = new LinkedHashMap<>();
+		Map<String, Integer> equipmentQuantities = new LinkedHashMap<>();
+		readEquipment(equipment, equipmentQuantities);
 		List<ItemEntry> inventory = readInventory();
 
 		long accountHash = client.getAccountHash();
@@ -108,7 +111,7 @@ public class EquipmentCollector
 		// duplicate is cheap, but suppressing under an ambiguous identity risks
 		// dropping a real snapshot for a different account. Mirrors NameChangeCollector.
 		if (accountHash != AccountKeyedDeltaGuard.NO_ACCOUNT
-			&& !delta.changed(accountHash, SNAPSHOT_KEY, signature(equipment, inventory)))
+			&& !delta.changed(accountHash, SNAPSHOT_KEY, signature(equipment, equipmentQuantities, inventory)))
 		{
 			return; // identical to the last snapshot already sent for this account
 		}
@@ -116,6 +119,7 @@ public class EquipmentCollector
 		EquipmentState payload = new EquipmentState();
 		Payloads.base(payload, client, rsn);
 		payload.equipment = equipment;
+		payload.equipmentQuantities = equipmentQuantities;
 		payload.inventory = inventory;
 		analytics.enqueue(EventCategory.EQUIPMENT, payload);
 	}
@@ -128,10 +132,23 @@ public class EquipmentCollector
 	 */
 	static String signature(Map<String, Integer> equipment, List<ItemEntry> inventory)
 	{
+		return signature(equipment, Collections.emptyMap(), inventory);
+	}
+
+	/** As {@link #signature(Map, List)}, with worn stack sizes (ammo fired changes state). */
+	static String signature(
+		Map<String, Integer> equipment, Map<String, Integer> equipmentQuantities, List<ItemEntry> inventory)
+	{
 		StringBuilder sb = new StringBuilder("e:");
 		for (Map.Entry<String, Integer> entry : equipment.entrySet())
 		{
-			sb.append(entry.getKey()).append('=').append(entry.getValue()).append(';');
+			sb.append(entry.getKey()).append('=').append(entry.getValue());
+			Integer quantity = equipmentQuantities.get(entry.getKey());
+			if (quantity != null && quantity != 1)
+			{
+				sb.append('x').append(quantity);
+			}
+			sb.append(';');
 		}
 		sb.append("|i:");
 		for (ItemEntry item : inventory)
@@ -141,13 +158,12 @@ public class EquipmentCollector
 		return sb.toString();
 	}
 
-	private Map<String, Integer> readEquipment()
+	private void readEquipment(Map<String, Integer> equipment, Map<String, Integer> quantities)
 	{
-		Map<String, Integer> equipment = new LinkedHashMap<>();
 		ItemContainer container = client.getItemContainer(InventoryID.EQUIPMENT);
 		if (container == null)
 		{
-			return equipment;
+			return;
 		}
 		Item[] items = container.getItems();
 		for (EquipmentInventorySlot slot : EquipmentInventorySlot.values())
@@ -160,10 +176,11 @@ public class EquipmentCollector
 			Item item = items[idx];
 			if (item != null && item.getId() > 0)
 			{
-				equipment.put(slot.name().toLowerCase(Locale.ROOT), item.getId());
+				String name = slot.name().toLowerCase(Locale.ROOT);
+				equipment.put(name, item.getId());
+				quantities.put(name, Math.max(1, item.getQuantity()));
 			}
 		}
-		return equipment;
 	}
 
 	private List<ItemEntry> readInventory()
