@@ -248,7 +248,7 @@ public class BankCollector
 	 */
 	private long unitValue(int itemId)
 	{
-		int gePrice = itemManager.getItemPrice(itemId);
+		long gePrice = itemManager.getItemPrice(itemId);
 		if (gePrice > 0)
 		{
 			return gePrice;

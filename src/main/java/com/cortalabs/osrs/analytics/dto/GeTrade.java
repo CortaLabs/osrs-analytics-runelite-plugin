@@ -38,7 +38,7 @@ public class GeTrade extends PluginPayload
 
 	/** Per-item price of the offer; absent when not carried. */
 	@SerializedName("price_each")
-	public Integer priceEach;
+	public Long priceEach;
 
 	/** GE slot index the offer filled in; absent when not carried. */
 	public Integer slot;
