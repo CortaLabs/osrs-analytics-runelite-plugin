@@ -4,9 +4,12 @@
  */
 package com.cortalabs.osrs.analytics.collector;
 
+import com.cortalabs.osrs.analytics.collector.SignalEventCollector.CounterCoalescer;
 import com.cortalabs.osrs.analytics.collector.SignalEventCollector.ParsedSignal;
 import com.cortalabs.osrs.analytics.collector.SignalEventCollector.SignalSessionState;
+import com.cortalabs.osrs.analytics.dto.SignalEvent;
 import com.cortalabs.osrs.analytics.dto.SignalEvent.SignalType;
+import java.util.List;
 import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -31,10 +34,17 @@ public class SignalEventCollectorTest
 	@Test
 	public void levelUpParsesSkillAndTheNewLevelWhenTheMessageCarriesIt()
 	{
-		ParsedSignal p = parse("Congratulations, you just advanced your Cooking level. You are now level 43.");
+		// The game's actual text (RuneLite ScreenshotPlugin's LEVEL_UP pattern).
+		ParsedSignal p = parse("Congratulations, you've just advanced your Agility level. You are now level 88.");
 		assertEquals(SignalType.LEVEL_UP, p.signalType);
-		assertEquals("Cooking", p.subject);
-		assertEquals(Integer.valueOf(43), p.value);
+		assertEquals("Agility", p.subject);
+		assertEquals(Integer.valueOf(88), p.value);
+		ParsedSignal curly = parse("Congratulations, you’ve just advanced your Cooking level. You are now level 43.");
+		assertEquals(SignalType.LEVEL_UP, curly.signalType);
+		assertEquals(Integer.valueOf(43), curly.value);
+		// The historic phrasing stays tolerated.
+		assertEquals(SignalType.LEVEL_UP,
+			parse("Congratulations, you just advanced your Cooking level. You are now level 43.").signalType);
 	}
 
 	@Test
@@ -83,9 +93,85 @@ public class SignalEventCollectorTest
 		assertEquals(SignalType.BOSS_KC, p.signalType);
 		assertEquals("Zulrah", p.subject);
 		assertEquals(Integer.valueOf(1412), p.value);
-		// The corpus covers kill/harvest/lap/completion verbs.
-		assertEquals(SignalType.BOSS_KC, parse("Your Zalcano harvest count is: 50").signalType);
-		assertEquals(SignalType.BOSS_KC, parse("Your Prifddinas Agility Course lap count is: 200").signalType);
+	}
+
+	@Test
+	public void countersAreTypedByWhatTheyCountAndOnlyKillsAreKillCounts()
+	{
+		ParsedSignal lap = parse("Your Rellekka Rooftop lap count is: 3281.");
+		assertEquals(SignalType.LAP_COUNT, lap.signalType);
+		assertEquals("Rellekka Rooftop", lap.subject);
+		assertEquals(Integer.valueOf(3281), lap.value);
+		assertEquals(SignalType.HARVEST_COUNT, parse("Your Zalcano harvest count is: 50").signalType);
+		ParsedSignal chest = parse("Your Barrows chest count is: <col=ff0000>10</col>.");
+		assertEquals(SignalType.COMPLETION_COUNT, chest.signalType);
+		assertEquals("Barrows chest", chest.subject);
+		assertEquals(Integer.valueOf(10), chest.value);
+		ParsedSignal raid = parse("Your completed Theatre of Blood count is: 5.");
+		assertEquals(SignalType.COMPLETION_COUNT, raid.signalType);
+		assertEquals("Theatre of Blood", raid.subject);
+		ParsedSignal toa = parse("Your completion count for Tombs of Amascut is: 3.");
+		assertEquals(SignalType.COMPLETION_COUNT, toa.signalType);
+		assertEquals("Tombs of Amascut", toa.subject);
+		assertEquals(SignalType.COMPLETION_COUNT, parse("Your subdued Wintertodt count is: 50.").signalType);
+		assertEquals(SignalType.COMPLETION_COUNT, parse("Your Gauntlet completion count is: 12.").signalType);
+		assertNull("a bare 'is:' without a count is not a counter", parse("Your reward is: 5"));
+	}
+
+	// --- Counter coalescing ---
+
+	private static SignalEvent counter(SignalType type, String subject, int value, String at)
+	{
+		SignalEvent e = new SignalEvent();
+		e.signalType = type;
+		e.subject = subject;
+		e.value = value;
+		e.timestamp = at;
+		return e;
+	}
+
+	@Test
+	public void firstCounterValuePerSessionIsSentAtOnceThenCoalescedPerWindow()
+	{
+		CounterCoalescer c = new CounterCoalescer();
+		long t0 = 1_000_000L;
+		assertEquals(1, c.offer(1L, t0, counter(SignalType.LAP_COUNT, "Rellekka Rooftop", 100, "t0")).size());
+		// Laps inside the window are held, never sent one-per-lap.
+		assertTrue(c.offer(1L, t0 + 60_000, counter(SignalType.LAP_COUNT, "Rellekka Rooftop", 101, "t1")).isEmpty());
+		assertTrue(c.offer(1L, t0 + 120_000, counter(SignalType.LAP_COUNT, "Rellekka Rooftop", 102, "t2")).isEmpty());
+		assertTrue(c.hasPending());
+		assertTrue(c.due(1L, t0 + CounterCoalescer.WINDOW_MS - 1).isEmpty());
+		List<SignalEvent> due = c.due(1L, t0 + CounterCoalescer.WINDOW_MS);
+		assertEquals(1, due.size());
+		assertEquals(Integer.valueOf(102), due.get(0).value);
+		assertEquals("the witnessed line's own timestamp, not the flush time", "t2", due.get(0).timestamp);
+		assertFalse(c.hasPending());
+	}
+
+	@Test
+	public void sessionEndFlushesTheLatestValueAndUnchangedValuesAreNeverResent()
+	{
+		CounterCoalescer c = new CounterCoalescer();
+		c.offer(1L, 0L, counter(SignalType.COMPLETION_COUNT, "Barrows chest", 10, "a"));
+		assertTrue(c.offer(1L, 1_000L, counter(SignalType.COMPLETION_COUNT, "Barrows chest", 10, "b")).isEmpty());
+		assertFalse("an unchanged counter is not pending", c.hasPending());
+		c.offer(1L, 2_000L, counter(SignalType.COMPLETION_COUNT, "Barrows chest", 11, "c"));
+		List<SignalEvent> flushed = c.endSession();
+		assertEquals(1, flushed.size());
+		assertEquals(Integer.valueOf(11), flushed.get(0).value);
+		// A new session starts clean: its first value is sent at once again.
+		assertEquals(1, c.offer(1L, 3_000L, counter(SignalType.COMPLETION_COUNT, "Barrows chest", 11, "d")).size());
+	}
+
+	@Test
+	public void accountChangeDropsTheOtherAccountsPendingCounters()
+	{
+		CounterCoalescer c = new CounterCoalescer();
+		c.offer(1L, 0L, counter(SignalType.LAP_COUNT, "Canifis Rooftop", 5, "a"));
+		c.offer(1L, 1_000L, counter(SignalType.LAP_COUNT, "Canifis Rooftop", 6, "b"));
+		assertEquals("account B's first value is not throttled by A",
+			1, c.offer(2L, 2_000L, counter(SignalType.LAP_COUNT, "Canifis Rooftop", 1, "c")).size());
+		assertTrue("A's pending value never bleeds into B", c.endSession().isEmpty());
 	}
 
 	@Test

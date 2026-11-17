@@ -8,7 +8,11 @@ import com.cortalabs.osrs.analytics.AnalyticsConfig;
 import com.cortalabs.osrs.analytics.dto.SignalEvent;
 import com.cortalabs.osrs.analytics.transport.AnalyticsClient;
 import com.cortalabs.osrs.analytics.transport.EventCategory;
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -20,6 +24,7 @@ import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.events.ChatMessage;
 import net.runelite.api.events.GameStateChanged;
+import net.runelite.api.events.GameTick;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.util.Text;
 
@@ -45,10 +50,12 @@ import net.runelite.client.util.Text;
  *       received, so signalling one would fabricate an acquisition.</li>
  *   <li>{@code clue_completion} — the OSRS clue-casket "You have completed N
  *       &lt;tier&gt; Treasure Trails" line (subject = tier, value = count).</li>
- *   <li>{@code boss_kc} — the RuneLite Chat-Commands plugin's KC corpus, "Your
- *       &lt;boss&gt; (kill|harvest|lap|completion) count is: N" (subject = boss,
- *       value = kill count). This is the timestamped per-kill signal the
- *       collection-log snapshot lacks.</li>
+ *   <li><b>Counters</b> — the game's "Your &lt;subject&gt; ... count is: N" family
+ *       (mirroring RuneLite Chat-Commands' KC corpus), typed by what is counted:
+ *       {@code boss_kc} (kill counts), {@code lap_count} (agility courses),
+ *       {@code harvest_count} (e.g. Zalcano, Hespori) and {@code completion_count}
+ *       (chests, raids, "completed"/"subdued" activities). Subject = the counted
+ *       thing, value = the game's lifetime counter.</li>
  *   <li>{@code diary_completion} — the OSRS achievement-diary completion line
  *       ("...completed all of the &lt;tier&gt; tasks in the &lt;region&gt; area").
  *       Best-effort and deliberately tolerant of "all the"/"all of the"; a wrong
@@ -60,6 +67,15 @@ import net.runelite.client.util.Text;
  * quest-completion provenance is owned by the quest-v2 lane. The wire enum value
  * exists for parity, but fabricating a fragile chat regex here would violate the
  * witnessed-only invariant, so this collector emits none.
+ *
+ * <p><b>Counter coalescing.</b> A counter's meaning is its latest value per subject
+ * (plus each session's first value, so the server can derive session deltas). Kill
+ * counts are emitted per line — each boss kill is a moment. Lap/harvest/completion
+ * counters are coalesced by {@link CounterCoalescer}: the first value per subject per
+ * session is sent immediately, later values at most once per {@link
+ * CounterCoalescer#WINDOW_MS} per subject, and the latest pending value is flushed after
+ * the window and at session end. Without this a rooftop session sent one signal per lap
+ * and could exhaust the per-session budget that level-ups and pets share.
  *
  * <p><b>Dedup + budget (I3).</b> A re-rendered chat line can fire the same
  * {@link ChatMessage} twice on one game tick; {@link SignalSessionState} suppresses
@@ -85,9 +101,13 @@ public class SignalEventCollector
 
 	// --- Regex corpus (witnessed-only; a partial match yields no signal) ---
 
-	/** OSRS level-up: "Congratulations, you just advanced your Cooking level." */
+	/**
+	 * OSRS level-up: "Congratulations, you've just advanced your Cooking level. You are now
+	 * level 43." (the game's text, as matched by RuneLite's ScreenshotPlugin). The pre-1.8
+	 * pattern omitted "'ve" and never matched a real level-up.
+	 */
 	private static final Pattern LEVEL_UP =
-		Pattern.compile("Congratulations, you just advanced your ([A-Za-z]+) level\\.");
+		Pattern.compile("Congratulations, you(?:(?:'|’)ve)? just advanced your ([A-Za-z]+) level\\.");
 	/** The new level, present only in the modern combined message: "You are now level 43." */
 	private static final Pattern LEVEL_UP_VALUE = Pattern.compile("You are now level ([0-9]+)");
 	/** OSRS pet drop; excludes the full-inventory miss ("...would have been followed"). */
@@ -97,9 +117,18 @@ public class SignalEventCollector
 	/** OSRS clue casket: "You have completed 42 medium Treasure Trails." */
 	private static final Pattern CLUE =
 		Pattern.compile("You have completed ([0-9,]+) ([A-Za-z]+) Treasure Trails?");
-	/** RuneLite Chat-Commands corpus (tags already stripped): "Your Zulrah kill count is: 500". */
-	private static final Pattern BOSS_KC =
-		Pattern.compile("Your (.+?) (?:kill|harvest|lap|completion) count is: ?([0-9,]+)");
+	/**
+	 * Counter lines (tags already stripped), after RuneLite Chat-Commands' KC corpus:
+	 * "Your Zulrah kill count is: 500", "Your Rellekka Rooftop lap count is: 3281",
+	 * "Your Barrows chest count is: 10", "Your completed Theatre of Blood count is: 5",
+	 * "Your subdued Wintertodt count is: 50". Group 1 = prefix, 2 = subject,
+	 * 3 = counted kind (absent for bare "count"), 4 = value.
+	 */
+	private static final Pattern COUNTER = Pattern.compile(
+		"^Your (subdued |completed )?(.+?) (?:(kill|harvest|lap|completion|success) )?count is: ?([0-9,]+)");
+	/** "Your completion count for Tombs of Amascut is: 3" (subject before "is"). */
+	private static final Pattern COMPLETION_COUNT_FOR =
+		Pattern.compile("^Your completion count for (.+?) is: ?([0-9,]+)");
 	/** OSRS achievement diary: "...completed all of the medium tasks in the Ardougne area." */
 	private static final Pattern DIARY =
 		Pattern.compile("completed all (?:of )?the ([A-Za-z]+) tasks in (?:the )?(.+?)(?:\\.| [Aa]rea|$)");
@@ -108,6 +137,7 @@ public class SignalEventCollector
 	private final AnalyticsClient analytics;
 	private final AnalyticsConfig config;
 	private final SignalSessionState session = new SignalSessionState();
+	private final CounterCoalescer counters = new CounterCoalescer();
 
 	@Inject
 	public SignalEventCollector(Client client, AnalyticsClient analytics, AnalyticsConfig config)
@@ -141,18 +171,47 @@ public class SignalEventCollector
 		{
 			return;
 		}
+		// Built now: rsn, world and timestamp are those of the witnessed line, even when a
+		// coalesced counter is flushed minutes later (or after the player has logged out).
+		SignalEvent payload = build(rsn, parsed);
+		if (isCoalescedCounter(parsed.signalType))
+		{
+			for (SignalEvent due : counters.offer(client.getAccountHash(), System.currentTimeMillis(), payload))
+			{
+				analytics.enqueue(EventCategory.SIGNAL_EVENT, due);
+			}
+			return;
+		}
 		// Dedup a same-tick re-render and enforce the per-session budget, keyed by account.
 		if (!session.admit(client.getAccountHash(), client.getTickCount(), Text.removeTags(raw)))
 		{
 			return;
 		}
+		analytics.enqueue(EventCategory.SIGNAL_EVENT, payload);
+	}
+
+	@Subscribe
+	public void onGameTick(GameTick tick)
+	{
+		if (!config.enabled() || !config.trackSignalEvents() || !counters.hasPending())
+		{
+			return;
+		}
+		for (SignalEvent due : counters.due(client.getAccountHash(), System.currentTimeMillis()))
+		{
+			analytics.enqueue(EventCategory.SIGNAL_EVENT, due);
+		}
+	}
+
+	private SignalEvent build(String rsn, ParsedSignal parsed)
+	{
 		SignalEvent payload = new SignalEvent();
 		Payloads.base(payload, client, rsn);
 		payload.signalType = parsed.signalType;
 		payload.subject = parsed.subject;
 		payload.value = parsed.value;
 		payload.detail = SignalEvent.clampDetail(parsed.detail);
-		analytics.enqueue(EventCategory.SIGNAL_EVENT, payload);
+		return payload;
 	}
 
 	@Subscribe
@@ -161,8 +220,16 @@ public class SignalEventCollector
 		GameState state = event.getGameState();
 		if (state == GameState.LOGIN_SCREEN || state == GameState.CONNECTION_LOST)
 		{
-			// Session boundary: reset the per-session dedup + budget (mirrors the sibling
-			// collectors' flush trigger; a world hop keeps the session, so HOPPING does not).
+			// Session boundary: flush coalesced counters (the session's final values), then
+			// reset the per-session dedup + budget (mirrors the sibling collectors' flush
+			// trigger; a world hop keeps the session, so HOPPING does not).
+			for (SignalEvent pending : counters.endSession())
+			{
+				if (config.enabled() && config.trackSignalEvents())
+				{
+					analytics.enqueue(EventCategory.SIGNAL_EVENT, pending);
+				}
+			}
 			session.endSession();
 		}
 	}
@@ -206,11 +273,18 @@ public class SignalEventCollector
 				SignalEvent.SignalType.CLUE_COMPLETION, m.group(2).trim(), parseIntOrNull(m.group(1)), message);
 		}
 
-		m = BOSS_KC.matcher(message);
+		m = COMPLETION_COUNT_FOR.matcher(message);
 		if (m.find())
 		{
 			return new ParsedSignal(
-				SignalEvent.SignalType.BOSS_KC, m.group(1).trim(), parseIntOrNull(m.group(2)), message);
+				SignalEvent.SignalType.COMPLETION_COUNT, m.group(1).trim(), parseIntOrNull(m.group(2)), message);
+		}
+
+		m = COUNTER.matcher(message);
+		if (m.find())
+		{
+			return new ParsedSignal(
+				counterType(m.group(1), m.group(3)), m.group(2).trim(), parseIntOrNull(m.group(4)), message);
 		}
 
 		m = DIARY.matcher(message);
@@ -225,6 +299,32 @@ public class SignalEventCollector
 
 		// quest_completion: no honest chat line exists (widget-driven; owned by quest-v2).
 		return null;
+	}
+
+	/** Classify a counter line by what it counts; only an explicit "kill" is a kill count. */
+	static SignalEvent.SignalType counterType(String prefix, String kind)
+	{
+		if (prefix == null && "kill".equals(kind))
+		{
+			return SignalEvent.SignalType.BOSS_KC;
+		}
+		if (prefix == null && "lap".equals(kind))
+		{
+			return SignalEvent.SignalType.LAP_COUNT;
+		}
+		if (prefix == null && "harvest".equals(kind))
+		{
+			return SignalEvent.SignalType.HARVEST_COUNT;
+		}
+		// completion / success / chest ("Your Barrows chest count") / completed / subdued
+		return SignalEvent.SignalType.COMPLETION_COUNT;
+	}
+
+	static boolean isCoalescedCounter(SignalEvent.SignalType type)
+	{
+		return type == SignalEvent.SignalType.LAP_COUNT
+			|| type == SignalEvent.SignalType.HARVEST_COUNT
+			|| type == SignalEvent.SignalType.COMPLETION_COUNT;
 	}
 
 	/** Parse an integer that may carry thousands separators, or {@code null} when out of range. */
@@ -330,6 +430,114 @@ public class SignalEventCollector
 			seenThisTick.clear();
 			lastTick = Integer.MIN_VALUE;
 			emitted = 0;
+		}
+	}
+
+	/**
+	 * Per-session counter coalescing, bound to one account (see class javadoc). Client-free
+	 * and clock-injected so its guarantees are testable with plain data: the first value
+	 * per subject is emitted at once, later values at most once per window, nothing is
+	 * lost (the latest pending value is always flushed — after the window or at session
+	 * end), and an unchanged value is never re-sent.
+	 *
+	 * <p>Not thread-safe: called only from the client thread.
+	 */
+	static final class CounterCoalescer
+	{
+		static final long WINDOW_MS = 5 * 60_000L;
+		/** Distinct counted subjects per session; far above any human session. */
+		static final int MAX_SUBJECTS = 128;
+
+		private final Map<String, Long> lastEmittedMs = new LinkedHashMap<>();
+		private final Map<String, Integer> lastEmittedValue = new LinkedHashMap<>();
+		private final Map<String, SignalEvent> pending = new LinkedHashMap<>();
+		private long account = AccountKeyedDeltaGuard.NO_ACCOUNT;
+
+		/** Offer one parsed counter; returns the signals to emit now (0 or 1). */
+		List<SignalEvent> offer(long accountHash, long nowMs, SignalEvent parsed)
+		{
+			bind(accountHash);
+			List<SignalEvent> out = new ArrayList<>(1);
+			String key = parsed.signalType + "|" + parsed.subject;
+			Long last = lastEmittedMs.get(key);
+			if (last == null)
+			{
+				if (lastEmittedMs.size() >= MAX_SUBJECTS)
+				{
+					return out; // pathological flood; the hard backstop, never a fabrication
+				}
+				record(key, nowMs, parsed);
+				out.add(parsed);
+				return out;
+			}
+			if (parsed.value != null && parsed.value.equals(lastEmittedValue.get(key)))
+			{
+				pending.remove(key);
+				return out; // unchanged counter: nothing new witnessed
+			}
+			if (nowMs - last >= WINDOW_MS)
+			{
+				pending.remove(key);
+				record(key, nowMs, parsed);
+				out.add(parsed);
+				return out;
+			}
+			pending.put(key, parsed);
+			return out;
+		}
+
+		boolean hasPending()
+		{
+			return !pending.isEmpty();
+		}
+
+		/** Pending values whose window has elapsed (called each game tick). */
+		List<SignalEvent> due(long accountHash, long nowMs)
+		{
+			bind(accountHash);
+			List<SignalEvent> out = new ArrayList<>();
+			pending.entrySet().removeIf(entry ->
+			{
+				Long last = lastEmittedMs.get(entry.getKey());
+				if (last != null && nowMs - last >= WINDOW_MS)
+				{
+					record(entry.getKey(), nowMs, entry.getValue());
+					out.add(entry.getValue());
+					return true;
+				}
+				return false;
+			});
+			return out;
+		}
+
+		/** Session end: the latest pending value per subject, then a clean slate. */
+		List<SignalEvent> endSession()
+		{
+			List<SignalEvent> out = new ArrayList<>(pending.values());
+			reset();
+			return out;
+		}
+
+		private void record(String key, long nowMs, SignalEvent parsed)
+		{
+			lastEmittedMs.put(key, nowMs);
+			lastEmittedValue.put(key, parsed.value);
+		}
+
+		private void bind(long accountHash)
+		{
+			if (accountHash != account)
+			{
+				account = accountHash;
+				reset();
+			}
+		}
+
+		private void reset()
+		{
+			lastEmittedMs.clear();
+			lastEmittedValue.clear();
+			pending.clear();
 		}
 	}
 }

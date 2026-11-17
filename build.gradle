@@ -27,7 +27,7 @@ dependencies {
 }
 
 group = 'com.cortalabs.osrs.analytics'
-version = '1.7.1'
+version = '1.8.0'
 
 tasks.withType(JavaCompile) {
 	options.encoding = 'UTF-8'

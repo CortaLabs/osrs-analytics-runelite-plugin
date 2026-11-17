@@ -642,7 +642,7 @@ public class DtoSerializationTest
 	@Test
 	public void signalTypeEnumValuesMatchContract()
 	{
-		// These six strings are the wire contract shared with the pydantic SignalType enum in
+		// These strings are the wire contract shared with the pydantic SignalType enum in
 		// catherby src/catherby/api/schemas/plugin.py; drifting either side reclassifies rows.
 		assertEquals("\"level_up\"", GSON.toJson(SignalEvent.SignalType.LEVEL_UP));
 		assertEquals("\"pet\"", GSON.toJson(SignalEvent.SignalType.PET));
@@ -650,6 +650,10 @@ public class DtoSerializationTest
 		assertEquals("\"boss_kc\"", GSON.toJson(SignalEvent.SignalType.BOSS_KC));
 		assertEquals("\"diary_completion\"", GSON.toJson(SignalEvent.SignalType.DIARY_COMPLETION));
 		assertEquals("\"quest_completion\"", GSON.toJson(SignalEvent.SignalType.QUEST_COMPLETION));
+		assertEquals("\"lap_count\"", GSON.toJson(SignalEvent.SignalType.LAP_COUNT));
+		assertEquals("\"harvest_count\"", GSON.toJson(SignalEvent.SignalType.HARVEST_COUNT));
+		assertEquals("\"completion_count\"", GSON.toJson(SignalEvent.SignalType.COMPLETION_COUNT));
+		assertEquals(9, SignalEvent.SignalType.values().length);
 	}
 
 	@Test
