@@ -111,7 +111,8 @@ public class LootCollector
 	{
 		try
 		{
-			String name = itemManager.getItemComposition(itemId).getName();
+			// getName() says "X (Members)" on a free world; the item is X (1.10.0).
+			String name = itemManager.getItemComposition(itemId).getMembersName();
 			return clamp(name == null || name.isEmpty() ? "Unknown" : name, 100);
 		}
 		catch (RuntimeException ex)

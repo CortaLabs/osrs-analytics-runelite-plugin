@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import javax.inject.Inject;
@@ -88,11 +89,12 @@ public class NpcKillCollector
 	private final Client client;
 	private final AnalyticsClient analytics;
 	private final AnalyticsConfig config;
-	private final NpcKillTally tally = new NpcKillTally();
+	private final NpcKillTally tally;
 
 	@Inject
-	public NpcKillCollector(Client client, AnalyticsClient analytics, AnalyticsConfig config)
+	public NpcKillCollector(Client client, AnalyticsClient analytics, AnalyticsConfig config, SessionContext sessions)
 	{
+		this.tally = new NpcKillTally(sessions::current);
 		this.client = client;
 		this.analytics = analytics;
 		this.config = config;
@@ -282,10 +284,21 @@ public class NpcKillCollector
 		private final Map<String, Deque<Integer>> pendingDeaths = new HashMap<>();
 		/** Recent unmatched KC ticks per pairing key, awaiting an ActorDeath echo. */
 		private final Map<String, Deque<Integer>> pendingKc = new HashMap<>();
+		private final Supplier<String> sessionIds;
 		private long account = AccountKeyedDeltaGuard.NO_ACCOUNT;
 		private String sessionId;
 		private String rsn;
 		private boolean active;
+
+		NpcKillTally()
+		{
+			this(() -> UUID.randomUUID().toString());
+		}
+
+		NpcKillTally(Supplier<String> sessionIds)
+		{
+			this.sessionIds = sessionIds;
+		}
 
 		/** Record a witnessed kill from an {@link ActorDeath}. */
 		void recordDeath(long accountHash, int tick, String npcName, String rsn)
@@ -360,7 +373,7 @@ public class NpcKillCollector
 			if (!active)
 			{
 				active = true;
-				sessionId = UUID.randomUUID().toString();
+				sessionId = sessionIds.get();
 			}
 			this.rsn = rsn;
 		}

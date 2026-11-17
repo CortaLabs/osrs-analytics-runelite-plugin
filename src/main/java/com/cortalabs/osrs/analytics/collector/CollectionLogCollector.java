@@ -509,7 +509,8 @@ public class CollectionLogCollector
 	{
 		try
 		{
-			String name = itemManager.getItemComposition(itemId).getName();
+			// getName() says "X (Members)" on a free world; the item is X (1.10.0).
+			String name = itemManager.getItemComposition(itemId).getMembersName();
 			return name == null || name.isEmpty() ? "Unknown" : clamp(name);
 		}
 		catch (RuntimeException ex)

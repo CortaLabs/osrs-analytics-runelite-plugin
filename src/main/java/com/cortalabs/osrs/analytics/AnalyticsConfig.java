@@ -128,19 +128,6 @@ public interface AnalyticsConfig extends Config
 		return 15;
 	}
 
-	@Range(min = 1, max = 60)
-	@ConfigItem(
-		keyName = "xpSnapshotMinutes",
-		name = "XP snapshot interval (minutes)",
-		description = "How often a full XP snapshot is taken while logged in (only when XP tracking is on).",
-		section = connectionSection,
-		position = 4
-	)
-	default int xpSnapshotMinutes()
-	{
-		return 5;
-	}
-
 	// --- Categories (all OFF by default; each names exactly what is sent) ---
 
 	@ConfigItem(keyName = "trackSessions", name = "Sessions", description = "Sends your login, logout and world-hop events (time and world).", section = categoriesSection, position = 0)
@@ -149,7 +136,7 @@ public interface AnalyticsConfig extends Config
 		return false;
 	}
 
-	@ConfigItem(keyName = "trackXp", name = "XP", description = "Sends periodic snapshots of your XP and level in every skill.", section = categoriesSection, position = 1)
+	@ConfigItem(keyName = "trackXp", name = "XP", description = "Sends your XP in every skill when it changes (at most once a minute).", section = categoriesSection, position = 1)
 	default boolean trackXp()
 	{
 		return false;

@@ -13,6 +13,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Supplier;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 import lombok.extern.slf4j.Slf4j;
@@ -61,12 +62,12 @@ public class ActivityClassificationCollector
 	private final ActivityAccumulator accumulator;
 
 	@Inject
-	public ActivityClassificationCollector(Client client, AnalyticsClient analytics, AnalyticsConfig config)
+	public ActivityClassificationCollector(Client client, AnalyticsClient analytics, AnalyticsConfig config, SessionContext sessions)
 	{
 		this.client = client;
 		this.analytics = analytics;
 		this.config = config;
-		this.accumulator = new ActivityAccumulator(new AnimationActivityMap());
+		this.accumulator = new ActivityAccumulator(new AnimationActivityMap(), sessions::current);
 	}
 
 	@Subscribe
@@ -168,6 +169,7 @@ public class ActivityClassificationCollector
 	static final class ActivityAccumulator
 	{
 		private final AnimationActivityMap map;
+		private final Supplier<String> sessionIds;
 		private final Map<String, Long> bucketTicks = new LinkedHashMap<>();
 		private long account = AccountKeyedDeltaGuard.NO_ACCOUNT;
 		private String sessionId;
@@ -176,7 +178,13 @@ public class ActivityClassificationCollector
 
 		ActivityAccumulator(AnimationActivityMap map)
 		{
+			this(map, () -> UUID.randomUUID().toString());
+		}
+
+		ActivityAccumulator(AnimationActivityMap map, Supplier<String> sessionIds)
+		{
 			this.map = map;
+			this.sessionIds = sessionIds;
 		}
 
 		/** Bind the current account; a change clears the accumulator first (I4). */
@@ -195,7 +203,7 @@ public class ActivityClassificationCollector
 			if (!active)
 			{
 				active = true;
-				sessionId = UUID.randomUUID().toString();
+				sessionId = sessionIds.get();
 			}
 			this.rsn = rsn;
 			bucketTicks.merge(map.classify(animationId), 1L, Long::sum);

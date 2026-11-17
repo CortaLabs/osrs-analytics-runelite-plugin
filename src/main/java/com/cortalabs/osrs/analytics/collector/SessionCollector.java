@@ -9,7 +9,6 @@ import com.cortalabs.osrs.analytics.dto.SessionEvent;
 import com.cortalabs.osrs.analytics.transport.AnalyticsClient;
 import com.cortalabs.osrs.analytics.transport.EventCategory;
 import java.time.Instant;
-import java.util.UUID;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 import net.runelite.api.Client;
@@ -29,15 +28,19 @@ public class SessionCollector
 	private final Client client;
 	private final AnalyticsClient analytics;
 	private final AnalyticsConfig config;
+	private final SessionContext sessions;
 
 	private boolean active;
 	private String sessionId;
 	private long loginEpochSeconds;
 	private int lastWorld;
+	/** Cached at login: at LOGIN_SCREEN the local player is gone, so the logout needs it. */
+	private String sessionRsn;
 
 	@Inject
-	public SessionCollector(Client client, AnalyticsClient analytics, AnalyticsConfig config)
+	public SessionCollector(Client client, AnalyticsClient analytics, AnalyticsConfig config, SessionContext sessions)
 	{
+		this.sessions = sessions;
 		this.client = client;
 		this.analytics = analytics;
 		this.config = config;
@@ -57,6 +60,7 @@ public class SessionCollector
 			if (state != GameState.HOPPING)
 			{
 				endSession();
+				sessions.end(); // every session-scoped collector starts a new id next tick
 			}
 		}
 	}
@@ -96,7 +100,8 @@ public class SessionCollector
 	private void startSession(String rsn, int world)
 	{
 		active = true;
-		sessionId = UUID.randomUUID().toString();
+		sessionId = sessions.current();
+		sessionRsn = rsn;
 		loginEpochSeconds = Instant.now().getEpochSecond();
 		lastWorld = world;
 		emit(rsn, world, SessionEvent.EventType.LOGIN, null);
@@ -113,7 +118,9 @@ public class SessionCollector
 		{
 			return;
 		}
-		String rsn = Payloads.rsn(client);
+		// Before 1.10.0 this read the local player, which is gone at LOGIN_SCREEN, so
+		// the logout was dropped (2 logouts for 121 logins recorded).
+		String rsn = sessionRsn;
 		if (rsn == null)
 		{
 			return;

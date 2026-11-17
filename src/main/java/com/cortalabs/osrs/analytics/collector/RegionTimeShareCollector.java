@@ -13,6 +13,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Supplier;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 import lombok.extern.slf4j.Slf4j;
@@ -56,11 +57,12 @@ public class RegionTimeShareCollector
 	private final Client client;
 	private final AnalyticsClient analytics;
 	private final AnalyticsConfig config;
-	private final RegionAccumulator accumulator = new RegionAccumulator();
+	private final RegionAccumulator accumulator;
 
 	@Inject
-	public RegionTimeShareCollector(Client client, AnalyticsClient analytics, AnalyticsConfig config)
+	public RegionTimeShareCollector(Client client, AnalyticsClient analytics, AnalyticsConfig config, SessionContext sessions)
 	{
+		this.accumulator = new RegionAccumulator(sessions::current);
 		this.client = client;
 		this.analytics = analytics;
 		this.config = config;
@@ -159,10 +161,21 @@ public class RegionTimeShareCollector
 	static final class RegionAccumulator
 	{
 		private final Map<Integer, Long> ticks = new LinkedHashMap<>();
+		private final Supplier<String> sessionIds;
 		private long account = AccountKeyedDeltaGuard.NO_ACCOUNT;
 		private String sessionId;
 		private String rsn;
 		private boolean active;
+
+		RegionAccumulator()
+		{
+			this(() -> UUID.randomUUID().toString());
+		}
+
+		RegionAccumulator(Supplier<String> sessionIds)
+		{
+			this.sessionIds = sessionIds;
+		}
 
 		/** Bind the current account; a change clears the accumulator first (I4). */
 		void bindAccount(long accountHash)
@@ -180,7 +193,7 @@ public class RegionTimeShareCollector
 			if (!active)
 			{
 				active = true;
-				sessionId = UUID.randomUUID().toString();
+				sessionId = sessionIds.get();
 			}
 			this.rsn = rsn;
 			ticks.merge(regionId, 1L, Long::sum);

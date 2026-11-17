@@ -18,11 +18,21 @@ import javax.inject.Singleton;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.Skill;
+import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
+import net.runelite.api.events.StatChanged;
 import net.runelite.client.eventbus.Subscribe;
 
 /**
- * Periodically snapshots XP for all 24 OSRS skills.
+ * Snapshots XP for all 24 OSRS skills when it changes (1.10.0).
+ *
+ * <p>{@link StatChanged} marks the skills dirty; the next game tick builds a snapshot and
+ * offers it to an {@link XpCoalescer}: the first snapshot of a session is sent at once,
+ * later ones at most once per {@link XpCoalescer#WINDOW_MS}, an unchanged map is never
+ * re-sent, and the latest pending snapshot is flushed at session end. A report can then
+ * always bracket its window with two distinct client observations; the old fixed
+ * heartbeat re-sent unchanged state (which the server dedups) and left short windows
+ * unbracketed.
  *
  * <p>The map is seeded with every required skill at 0 and then overlaid from
  * {@link Skill#values()}, so a client build that does not yet know a skill
@@ -42,8 +52,9 @@ public class XpCollector
 	private final Client client;
 	private final AnalyticsClient analytics;
 	private final AnalyticsConfig config;
+	private final XpCoalescer coalescer = new XpCoalescer();
 
-	private long lastSnapshotMs;
+	private boolean dirty;
 
 	@Inject
 	public XpCollector(Client client, AnalyticsClient analytics, AnalyticsConfig config)
@@ -51,6 +62,12 @@ public class XpCollector
 		this.client = client;
 		this.analytics = analytics;
 		this.config = config;
+	}
+
+	@Subscribe
+	public void onStatChanged(StatChanged event)
+	{
+		dirty = true;
 	}
 
 	@Subscribe
@@ -64,22 +81,51 @@ public class XpCollector
 		{
 			return;
 		}
-		String rsn = Payloads.rsn(client);
-		if (rsn == null)
-		{
-			return;
-		}
-		long intervalMs = Math.max(1, config.xpSnapshotMinutes()) * 60_000L;
+		long accountHash = client.getAccountHash();
 		long nowMs = System.currentTimeMillis();
-		if (nowMs - lastSnapshotMs < intervalMs)
+		if (dirty)
 		{
-			return;
+			String rsn = Payloads.rsn(client);
+			if (rsn == null)
+			{
+				return; // stay dirty until the player is known
+			}
+			dirty = false;
+			send(coalescer.offer(accountHash, nowMs, snapshot(rsn)));
 		}
-		lastSnapshotMs = nowMs;
-		snapshot(rsn);
+		send(coalescer.due(accountHash, nowMs));
 	}
 
-	private void snapshot(String rsn)
+	@Subscribe
+	public void onGameStateChanged(GameStateChanged event)
+	{
+		GameState state = event.getGameState();
+		if (state == GameState.LOGGED_IN)
+		{
+			dirty = true; // the session's first observation, even if no stat changes
+		}
+		else if (state == GameState.LOGIN_SCREEN || state == GameState.CONNECTION_LOST)
+		{
+			// Session boundary: the latest pending snapshot (the session's final XP),
+			// then a clean slate (mirrors SignalEventCollector's counter flush).
+			XpSnapshot pending = coalescer.endSession();
+			if (config.enabled() && config.trackXp())
+			{
+				send(pending);
+			}
+			dirty = false;
+		}
+	}
+
+	private void send(XpSnapshot payload)
+	{
+		if (payload != null)
+		{
+			analytics.enqueue(EventCategory.XP, payload);
+		}
+	}
+
+	private XpSnapshot snapshot(String rsn)
 	{
 		Map<String, Integer> skills = new LinkedHashMap<>();
 		for (String name : REQUIRED_SKILLS)
@@ -98,6 +144,85 @@ public class XpCollector
 		XpSnapshot payload = new XpSnapshot();
 		Payloads.base(payload, client, rsn);
 		payload.skills = skills;
-		analytics.enqueue(EventCategory.XP, payload);
+		return payload;
+	}
+
+	/**
+	 * Per-account XP coalescing: first snapshot now, then at most one per window; an
+	 * unchanged map is never re-sent; the latest pending snapshot (with its own
+	 * timestamp) is sent when the window elapses or the session ends. Pure, so the
+	 * cadence is testable without a client.
+	 */
+	static final class XpCoalescer
+	{
+		static final long WINDOW_MS = 60_000L;
+
+		private long account = AccountKeyedDeltaGuard.NO_ACCOUNT;
+		private long lastEmittedMs;
+		private Map<String, Integer> lastEmitted;
+		private XpSnapshot pending;
+
+		/** Offer the current snapshot; returns it when it should be sent now, else null. */
+		XpSnapshot offer(long accountHash, long nowMs, XpSnapshot snapshot)
+		{
+			bind(accountHash);
+			if (snapshot.skills.equals(lastEmitted))
+			{
+				pending = null; // back to what was last sent: nothing new witnessed
+				return null;
+			}
+			if (lastEmitted == null || nowMs - lastEmittedMs >= WINDOW_MS)
+			{
+				pending = null;
+				record(nowMs, snapshot);
+				return snapshot;
+			}
+			pending = snapshot;
+			return null;
+		}
+
+		/** The pending snapshot once its window has elapsed (called each game tick). */
+		XpSnapshot due(long accountHash, long nowMs)
+		{
+			bind(accountHash);
+			if (pending == null || nowMs - lastEmittedMs < WINDOW_MS)
+			{
+				return null;
+			}
+			XpSnapshot out = pending;
+			pending = null;
+			record(nowMs, out);
+			return out;
+		}
+
+		/** Session end: the latest pending snapshot (or null), then a clean slate. */
+		XpSnapshot endSession()
+		{
+			XpSnapshot out = pending;
+			reset();
+			return out;
+		}
+
+		private void record(long nowMs, XpSnapshot snapshot)
+		{
+			lastEmittedMs = nowMs;
+			lastEmitted = snapshot.skills;
+		}
+
+		private void bind(long accountHash)
+		{
+			if (accountHash != account)
+			{
+				account = accountHash;
+				reset();
+			}
+		}
+
+		private void reset()
+		{
+			lastEmitted = null;
+			lastEmittedMs = 0L;
+			pending = null;
+		}
 	}
 }
