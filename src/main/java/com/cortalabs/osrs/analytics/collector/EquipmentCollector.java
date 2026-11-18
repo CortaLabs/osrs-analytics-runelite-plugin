@@ -26,6 +26,7 @@ import net.runelite.api.ItemContainer;
 import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.events.GameTick;
 import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.game.ItemManager;
 
 /**
  * Snapshots worn equipment and inventory. Container changes are debounced so a
@@ -50,17 +51,19 @@ public class EquipmentCollector
 	private final Client client;
 	private final AnalyticsClient analytics;
 	private final AnalyticsConfig config;
+	private final ItemManager itemManager;
 	private final AccountKeyedDeltaGuard delta = new AccountKeyedDeltaGuard();
 
 	private boolean dirty;
 	private long lastSendMs;
 
 	@Inject
-	public EquipmentCollector(Client client, AnalyticsClient analytics, AnalyticsConfig config)
+	public EquipmentCollector(Client client, AnalyticsClient analytics, AnalyticsConfig config, ItemManager itemManager)
 	{
 		this.client = client;
 		this.analytics = analytics;
 		this.config = config;
+		this.itemManager = itemManager;
 	}
 
 	@Subscribe
@@ -120,7 +123,11 @@ public class EquipmentCollector
 		Payloads.base(payload, client, rsn);
 		payload.equipment = equipment;
 		payload.equipmentQuantities = equipmentQuantities;
-		payload.inventory = inventory;
+		// Prices ride along but never enter the signature: a GE price tick on an
+		// unchanged loadout is not a new state (the bank's content key does the same).
+		payload.equipmentValues = priceEquipment(equipment, equipmentQuantities);
+		payload.inventory = priceInventory(inventory);
+		payload.valuationMethod = ItemValues.METHOD;
 		analytics.enqueue(EventCategory.EQUIPMENT, payload);
 	}
 
@@ -156,6 +163,28 @@ public class EquipmentCollector
 			sb.append(item.itemId).append('x').append(item.quantity).append(',');
 		}
 		return sb.toString();
+	}
+
+	private Map<String, Long> priceEquipment(Map<String, Integer> equipment, Map<String, Integer> quantities)
+	{
+		Map<String, Long> values = new LinkedHashMap<>();
+		for (Map.Entry<String, Integer> entry : equipment.entrySet())
+		{
+			int quantity = quantities.getOrDefault(entry.getKey(), 1);
+			values.put(entry.getKey(), ItemValues.unitValue(itemManager, entry.getValue()) * quantity);
+		}
+		return values;
+	}
+
+	private List<ItemEntry> priceInventory(List<ItemEntry> inventory)
+	{
+		List<ItemEntry> priced = new ArrayList<>(inventory.size());
+		for (ItemEntry item : inventory)
+		{
+			priced.add(new ItemEntry(item.itemId, item.quantity,
+				ItemValues.unitValue(itemManager, item.itemId) * item.quantity));
+		}
+		return priced;
 	}
 
 	private void readEquipment(Map<String, Integer> equipment, Map<String, Integer> quantities)

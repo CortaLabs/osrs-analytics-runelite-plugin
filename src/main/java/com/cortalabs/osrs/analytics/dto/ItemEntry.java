@@ -21,9 +21,9 @@ public class ItemEntry
 	public int quantity;
 
 	/**
-	 * Value for this stack (bank items only); omitted when null. GE price when
-	 * the item has one, high-alchemy fallback otherwise — see the
-	 * {@code valuation_method} field on {@code BankSnapshot}.
+	 * Value for this stack (bank, and inventory since 1.11.0); omitted when null.
+	 * GE price when the item has one, high-alchemy fallback otherwise — see the
+	 * {@code valuation_method} field on the carrying payload.
 	 */
 	public Long value;
 
