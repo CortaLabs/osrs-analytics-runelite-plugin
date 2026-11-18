@@ -115,4 +115,20 @@ public class EquipmentCollectorTest
 			EquipmentCollector.signature(equip("weapon", 861), inv(995, 1)),
 			EquipmentCollector.signature(equip("weapon", 861), ones, inv(995, 1)));
 	}
+
+	@Test
+	public void pricesNeverEnterTheChangeSignature()
+	{
+		// 1.11.0: values ride on the payload; a price tick on an unchanged loadout
+		// must not look like a new state.
+		java.util.Map<String, Integer> equipment = new java.util.LinkedHashMap<>();
+		equipment.put("weapon", 4151);
+		java.util.List<com.cortalabs.osrs.analytics.dto.ItemEntry> unpriced =
+			java.util.Arrays.asList(new com.cortalabs.osrs.analytics.dto.ItemEntry(995, 10));
+		java.util.List<com.cortalabs.osrs.analytics.dto.ItemEntry> priced =
+			java.util.Arrays.asList(new com.cortalabs.osrs.analytics.dto.ItemEntry(995, 10, 10L));
+		org.junit.Assert.assertEquals(
+			EquipmentCollector.signature(equipment, unpriced),
+			EquipmentCollector.signature(equipment, priced));
+	}
 }

@@ -224,7 +224,7 @@ public class BankCollector
 			{
 				continue;
 			}
-			long stackValue = unitValue(item.getId()) * item.getQuantity();
+			long stackValue = ItemValues.unitValue(itemManager, item.getId()) * item.getQuantity();
 			items.add(new ItemEntry(item.getId(), item.getQuantity(), stackValue));
 			totalValue += stackValue;
 		}
@@ -237,22 +237,7 @@ public class BankCollector
 		Payloads.base(payload, client, rsn);
 		payload.items = items;
 		payload.totalValue = totalValue;
-		payload.valuationMethod = "ge_then_ha_v1";
+		payload.valuationMethod = ItemValues.METHOD;
 		analytics.enqueue(EventCategory.BANK, payload);
-	}
-
-	/**
-	 * Per-unit value: GE price when the item has one (coins/platinum are 1/1000
-	 * inside {@code getItemPrice}), otherwise the high-alchemy price so
-	 * untradeables are not reported as worthless. Never negative.
-	 */
-	private long unitValue(int itemId)
-	{
-		long gePrice = itemManager.getItemPrice(itemId);
-		if (gePrice > 0)
-		{
-			return gePrice;
-		}
-		return Math.max(0, itemManager.getItemComposition(itemId).getHaPrice());
 	}
 }

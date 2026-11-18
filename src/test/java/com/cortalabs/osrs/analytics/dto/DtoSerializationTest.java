@@ -335,8 +335,28 @@ public class DtoSerializationTest
 		JsonObject item = inv.get(0).getAsJsonObject();
 		assertEquals(995, item.get("item_id").getAsInt());
 		assertEquals(1000, item.get("quantity").getAsInt());
-		// inventory items must NOT carry a value key.
+		// An unpriced entry (pre-1.11 shape) carries no value key, never a 0.
 		assertFalse(item.has("value"));
+		assertFalse(o.has("equipment_values"));
+	}
+
+	@Test
+	public void equipmentStateCarriesStackValuesSince1110()
+	{
+		EquipmentState eq = new EquipmentState();
+		eq.rsn = "Zezima";
+		eq.pluginVersion = "1.11.0";
+		eq.equipment = new LinkedHashMap<>();
+		eq.equipment.put("weapon", 4151);
+		eq.equipmentValues = new LinkedHashMap<>();
+		eq.equipmentValues.put("weapon", 1_500_000L);
+		eq.inventory = Arrays.asList(new ItemEntry(995, 1000, 1000L));
+		eq.valuationMethod = "ge_then_ha_v1";
+
+		JsonObject o = json(eq);
+		assertEquals(1_500_000L, o.getAsJsonObject("equipment_values").get("weapon").getAsLong());
+		assertEquals("ge_then_ha_v1", o.get("valuation_method").getAsString());
+		assertEquals(1000L, o.getAsJsonArray("inventory").get(0).getAsJsonObject().get("value").getAsLong());
 	}
 
 	@Test

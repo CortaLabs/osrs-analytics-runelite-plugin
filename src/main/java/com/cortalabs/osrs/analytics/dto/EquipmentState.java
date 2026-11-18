@@ -25,4 +25,11 @@ public class EquipmentState extends PluginPayload
 	public Map<String, Integer> equipmentQuantities;
 
 	public List<ItemEntry> inventory;
+
+	/** Worn stack value per slot (1.11.0), priced like the bank; inventory entries carry their own value. */
+	@SerializedName("equipment_values")
+	public Map<String, Long> equipmentValues;
+
+	@SerializedName("valuation_method")
+	public String valuationMethod;
 }
